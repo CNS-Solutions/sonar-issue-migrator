@@ -1,325 +1,435 @@
+/*******************************************************************************
+ ** COPYRIGHT: CNS-Solutions & Support GmbH
+ **            Member of Frequentis Group
+ **            Innovationsstrasse 1
+ **            A-1100 Vienna
+ **            AUSTRIA
+ **            Tel. +43 1 81150-0
+ ** LANGUAGE:  Java, J2SE JDK
+ **
+ ** The copyright to the computer program(s) herein is the property of
+ ** CNS-Solutions & Support GmbH, Austria. The program(s) shall not be used
+ ** and/or copied without the written permission of CNS-Solutions & Support GmbH.
+ *******************************************************************************/
 package org.jmf.services;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyManagementException;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
-import org.apache.commons.collections4.MultiValuedMap;
-import org.apache.commons.collections4.multimap.ArrayListValuedHashMap;
+import javax.net.ssl.SSLContext;
+
 import org.apache.commons.lang3.StringUtils;
-import org.jmf.util.FileUtils;
-import org.jmf.util.HttpUtils;
+import org.apache.http.Header;
+import org.apache.http.HttpStatus;
+import org.apache.http.NameValuePair;
+import org.apache.http.StatusLine;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
+import org.apache.http.conn.ssl.TrustStrategy;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.message.BasicHeader;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.ssl.SSLContextBuilder;
+import org.apache.http.util.EntityUtils;
+import org.jmf.vo.Comment;
 import org.jmf.vo.Issue;
 import org.jmf.vo.JsonIssue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * Service for Sonar web service API.
- * 
- * @author jose
  *
+ * @author jose
+ * @author mvlcek
  */
 public class SonarClientService {
 
-    private static final String LOGIN = "api/authentication/login";
+   /** open status */
+   public static final String STATUS_OPEN = "OPEN";
 
-    private static final String API_DO_TRANSITION = "api/issues/do_transition";
+   /** confirmed status */
+   public static final String STATUS_CONFIRMED = "CONFIRMED";
 
-    private static final String API_SEARCH = "api/issues/search";
+   /** reopened status */
+   public static final String STATUS_REOPENED = "REOPENED";
 
-    private static final String SET_COOKIE = "Set-Cookie";
+   /** resolved status */
+   public static final String STATUS_RESOLVED = "RESOLVED";
 
-    private static final Logger FILE_LOGGER = LoggerFactory.getLogger("file");
+   /** resolution false positive */
+   public static final String RESOLUTION_FALSE_POSITIVE = "FALSE-POSITIVE";
 
-    private static final Logger CONSOLE_LOGGER = LoggerFactory.getLogger("console");
+   /** resolution won't fix */
+   public static final String RESOLUTION_WONT_FIX = "WONTFIX";
 
-    private static final String OPEN = "OPEN";
+   private static final Logger LOG = LoggerFactory.getLogger(SonarClientService.class);
 
-    private static final String REOPENED = "REOPENED";
+   private static final String API_SEARCH = "api/issues/search";
 
-    private static final String CONFIRMED = "CONFIRMED";
+   private static final String API_DO_TRANSITION = "api/issues/do_transition";
 
-    private static final String RESOLVED = "RESOLVED";
+   private static final String API_ADD_COMMENT = "api/issues/add_comment";
 
-    private static final String FALSE_POSITIVE = "FALSE-POSITIVE";
+   private static final String API_ASSIGN = "api/issues/assign";
 
-    private static final String TRANSITION = "transition";
+   private static final String PARAM_ISSUE = "issue";
 
-    private static final String JWT_SESSION = "JWT-SESSION";
+   private static final String PARAM_TRANSITION = "transition";
 
-    private static final String XSRF_TOKEN = "XSRF-TOKEN";
+   private static final String PARAM_TEXT = "text";
 
-	private static final String X_XSRF_TOKEN = "X-XSRF-TOKEN";
+   private static final String PARAM_COMPONENT_KEYS = "componentKeys";
 
+   private static final String PARAM_STATUSES = "statuses";
 
-    private final MultiValuedMap<String, String> headers; // Cookie and auth info
+   private static final String PARAM_RESOLUTIONS = "resolutions";
 
-    private String baseUrl;
+   private static final String PARAM_RULES = "rules";
 
-    /**
-     * Constructor.
-     */
-    public SonarClientService(String url) {
-             
-        this.headers = new ArrayListValuedHashMap<>();
-        
-        try {      
-            this.baseUrl = HttpUtils.getBaseUrl(url);
-        } catch (java.lang.ArrayIndexOutOfBoundsException e ) {
-            FILE_LOGGER.error("Error parsing flagged issues URL.", e);
-        }
-    }
-   
-    
-    public final String getBaseUrl() {
-        return baseUrl;
-    }
+   private static final String PARAM_ASSIGNEE = "assignee";
 
+   private static final String PARAM_PAGE_INDEX = "pageIndex";
 
-    /**
-     * Connect to login url, get cookie, set cookie and HTTP credentials to
-     * headers.
-     * 
-     * @param user
-     *            HTTP User
-     * @param passw
-     *            HTTP Password
-     * @param sonarUser
-     *            Sonar user
-     * @param sonarPass
-     *            Sonar pass
-     * @return True if authenticated, False otherwise
-     */
-    public final Boolean authenticate(String user, String passw, String sonarUser, String sonarPass) {
+   private static final String PARAM_ADDITIONAL_FIELDS = "additionalFields";
 
-        try {
-            // Compose headers
-            if (StringUtils.isNotEmpty(user) && StringUtils.isNotEmpty(passw)) {
-                this.headers.put("Authorization",
-                        "Basic " + Base64.getEncoder().encodeToString((user + ":" + passw).getBytes("UTF8")));
+   private static final String TRANSITION_CONFIRM = "confirm";
+
+   private static final String TRANSITION_FALSE_POSITIVE = "falsepositive";
+
+   private static final String TRANSITION_WONT_FIX = "wontfix";
+
+   private static final String FIELD_COMMENTS = "comments";
+
+   private final String baseUrl;
+
+   private final String login;
+
+   private final String password;
+
+   private final boolean readonly;
+
+   private final ObjectMapper mapper;
+
+   /**
+    * Constructor.
+    *
+    * @param baseUrl the base URL, e.g. http://localhost:9000
+    * @param login the user name or token
+    * @param password the password or empty for a token
+    * @param readonly do not actually do any changes
+    */
+   public SonarClientService(final String baseUrl, final String login, final String password, final boolean readonly) {
+      this.baseUrl = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+      this.login = login;
+      this.password = password;
+      this.readonly = readonly;
+      this.mapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+   }
+
+   /**
+    * Update project's issues based on flagged issues list.
+    *
+    * @param componentKey the component key, e.g. project key
+    * @param sourceIssues List of source issues
+    * @param deltaLines maximum delta of line numbers to successfully match an issue
+    * @param migrateConfirmed if open issues should be confirmed, if the source issue is confirmed
+    * @param migrateFalsePositives if unresolved issues should be resolved as false positive, if the source issue is a false positive
+    * @param migrateWontFixes if unresolved issues should be resolved as wontfix, if the source issue is a wontfix
+    * @param addComments if comments should be migrated, too
+    */
+   public final void updateIssues(final String componentKey, final List<Issue> sourceIssues, final int deltaLines,
+         final boolean migrateConfirmed, final boolean migrateFalsePositives, final boolean migrateWontFixes, final boolean addComments) {
+      final Map<String, List<Issue>> issuesByRuleMap = new HashMap<>();
+
+      final int total = sourceIssues.size();
+      int processed = 0;
+      int updated = 0;
+      int unmatched = 0;
+
+      SonarClientService.LOG.info("Processing {} issues...", total);
+      try (CloseableHttpClient client = this.createHttpClient(true)) {
+         for (final Issue sourceIssue : sourceIssues) {
+            final String rule = sourceIssue.getRule();
+            final List<Issue> ruleIssues = issuesByRuleMap.computeIfAbsent(rule, r -> this.getIssuesForRule(componentKey, r));
+            final Issue targetIssue = ruleIssues.stream()
+                  .filter(issue -> issue.getParsedComponent().equals(sourceIssue.getParsedComponent()))
+                  .filter(issue -> Math.abs(issue.getLine() - sourceIssue.getLine()) <= deltaLines)
+                  .sorted((issue1, issue2) -> Math.abs(issue1.getLine() - sourceIssue.getLine()) - Math.abs(issue2.getLine() - sourceIssue.getLine()))
+                  .findFirst()
+                  .orElse(null);
+
+            if (targetIssue != null) {
+               ruleIssues.remove(targetIssue);
+
+               boolean changed = false;
+               String transition = null;
+
+               if (SonarClientService.STATUS_OPEN.equals(targetIssue.getStatus())) {
+                  if (migrateConfirmed && SonarClientService.STATUS_CONFIRMED.equals(sourceIssue.getStatus())) {
+                     transition = SonarClientService.TRANSITION_CONFIRM;
+                  }
+               }
+               if (!SonarClientService.STATUS_RESOLVED.equals(targetIssue.getStatus())) {
+                  if (migrateFalsePositives && SonarClientService.RESOLUTION_FALSE_POSITIVE.equals(sourceIssue.getResolution())) {
+                     transition = SonarClientService.TRANSITION_FALSE_POSITIVE;
+                  } else if (migrateWontFixes && SonarClientService.RESOLUTION_WONT_FIX.equals(sourceIssue.getResolution())) {
+                     transition = SonarClientService.TRANSITION_WONT_FIX;
+                  }
+               }
+               if (transition != null) {
+                  if (this.doTransition(client, targetIssue, transition)) {
+                     changed = true;
+                  }
+               }
+
+               if (sourceIssue.getComments() != null && targetIssue.getComments() != null) {
+                  for (final Comment comment : sourceIssue.getComments()) {
+
+                     final boolean hasComment = targetIssue.getComments().stream()
+                           .anyMatch(c -> c.getMarkdown() != null && c.getMarkdown().equals(comment.getMarkdown()));
+
+                     if (!hasComment) {
+                        if (this.addComment(client, targetIssue, comment.getMarkdown())) {
+                           changed = true;
+                        }
+                     }
+                  }
+               }
+
+               if (changed) {
+                  updated++;
+               }
+
+            } else {
+               unmatched++;
+               SonarClientService.LOG.warn("Could not find match for {}/{}", sourceIssue.getParsedComponent(), sourceIssue.getLine());
             }
+            processed++;
+            SonarClientService.LOG.info("Processed {} and updated {} of {} issues", processed, updated, total);
+         }
+         SonarClientService.LOG.info("Processed {} issues: {} updated, {} unmatched.", processed, updated, unmatched);
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error updating issues", e);
+      }
+   }
 
-            // Compose POST params
-            final Map<String, String> params = new ConcurrentHashMap<>();
-            params.put("login", sonarUser);
-            params.put("password", sonarPass);
+   private boolean doTransition(final CloseableHttpClient client, final Issue issue, final String transition) {
+      if (this.readonly) {
+         SonarClientService.LOG.info("Issue {}/{} would be updated: {}", issue.getParsedComponent(), issue.getLine(), transition);
+         return true;
+      }
+      try {
+         final StatusLine statusLine = this.post(client, this.baseUrl + SonarClientService.API_DO_TRANSITION,
+               new BasicNameValuePair(SonarClientService.PARAM_ISSUE, issue.getKey()),
+               new BasicNameValuePair(SonarClientService.PARAM_TRANSITION, transition));
+         if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
+            SonarClientService.LOG.info("Issue {}/{} updated: {}", issue.getParsedComponent(), issue.getLine(), transition);
+            return true;
+         } else {
+            SonarClientService.LOG.error("Error doing transition '{}' for issue {}/{}: {}", transition, issue.getParsedComponent(), issue.getLine(), statusLine);
+         }
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error doing transition '{}' for issue {}/{}: {}", transition, issue.getParsedComponent(), issue.getLine(), e.getMessage(), e);
+      }
+      return false;
+   }
 
-            // Compose login URL
-            final String loginUrl = this.baseUrl + "/" + LOGIN;
+   private boolean addComment(final CloseableHttpClient client, final Issue issue, final String text) {
+      if (this.readonly) {
+         SonarClientService.LOG.info("Issue {}/{} would be updated with comment: '{}'", issue.getParsedComponent(), issue.getLine(), text);
+         return true;
+      }
+      try {
+         final StatusLine statusLine = this.post(client, this.baseUrl + SonarClientService.API_ADD_COMMENT,
+               new BasicNameValuePair(SonarClientService.PARAM_ISSUE, issue.getKey()),
+               new BasicNameValuePair(SonarClientService.PARAM_TEXT, text));
+         if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
+            SonarClientService.LOG.info("Issue {}/{} updated with comment: '{}'", issue.getParsedComponent(), issue.getLine(), text);
+            return true;
+         } else {
+            SonarClientService.LOG.error("Error adding comment '{}' to issue {}/{}: {}", text, issue.getParsedComponent(), issue.getLine(), statusLine);
+         }
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error adding comment '{}' to issue {}/{}: {}", text, issue.getParsedComponent(), issue.getLine(), e.getMessage(), e);
+      }
+      return false;
+   }
 
-            // Launch request to Sonar server
-            final MultiValuedMap<String, String> response = HttpUtils.httpRequest(loginUrl, this.headers, params);
-            if (response != null && !response.get("body").contains("Authentication failed") ) {
-                setAuthHeaders(response.get(SET_COOKIE));
-                return true;
+   /** not yet used */
+   private boolean assign(final CloseableHttpClient client, final Issue issue, final String assignee) {
+      if (this.readonly) {
+         SonarClientService.LOG.info("Issue {}/{} would be assigned to {}", issue.getParsedComponent(), issue.getLine(), assignee);
+         return true;
+      }
+      try {
+         final StatusLine statusLine = this.post(client, this.baseUrl + SonarClientService.API_ASSIGN,
+               new BasicNameValuePair(SonarClientService.PARAM_ISSUE, issue.getKey()),
+               new BasicNameValuePair(SonarClientService.PARAM_ASSIGNEE, assignee));
+         if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
+            SonarClientService.LOG.info("Issue {}/{} assigned to {}", issue.getParsedComponent(), issue.getLine(), assignee);
+            return true;
+         } else {
+            SonarClientService.LOG.error("Error assigning to {} issue {}/{}: {}", assignee, issue.getParsedComponent(), issue.getLine(), statusLine);
+         }
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error assigning to {} issue {}/{}: {}", assignee, issue.getParsedComponent(), issue.getLine(), e.getMessage(), e);
+      }
+      return false;
+   }
+
+   /**
+    * Get list of issues for a given status.
+    *
+    * @param componentKey the component key, e.g. project key
+    * @param status the status, e.g. CONFIRMED or RESOLVED
+    * @param resolutions the resolutions, e.g. FALSE-POSITIVE or WONTFIX
+    * @return the issues
+    * @throws UnsupportedEncodingException never
+    */
+   public List<Issue> getIssuesInStatus(final String componentKey, final String status, final String... resolutions) {
+      try {
+         return this.getIssues(
+               new BasicNameValuePair(SonarClientService.PARAM_COMPONENT_KEYS, componentKey),
+               new BasicNameValuePair(SonarClientService.PARAM_STATUSES, status),
+               new BasicNameValuePair(SonarClientService.PARAM_ADDITIONAL_FIELDS, SonarClientService.FIELD_COMMENTS),
+               new BasicNameValuePair(SonarClientService.PARAM_RESOLUTIONS, Arrays.stream(resolutions).collect(Collectors.joining(","))));
+      } catch (final Exception e) {
+         return new ArrayList<>();
+      }
+   }
+
+   /**
+    * Get list issues for a given rule.
+    *
+    * @param componentKey the component key, e.g. project key
+    * @param rule the rule key, e.g. java:S2384
+    * @return the issues
+    * @throws UnsupportedEncodingException
+    */
+   public List<Issue> getIssuesForRule(final String componentKey, final String rule) {
+      try {
+         return this.getIssues(
+               new BasicNameValuePair(SonarClientService.PARAM_COMPONENT_KEYS, componentKey),
+               new BasicNameValuePair(SonarClientService.PARAM_RULES, rule),
+               new BasicNameValuePair(SonarClientService.PARAM_ADDITIONAL_FIELDS, SonarClientService.FIELD_COMMENTS));
+      } catch (final Exception e) {
+         return new ArrayList<>();
+      }
+   }
+
+   private List<Issue> getIssues(final NameValuePair... parameters) {
+      final List<Issue> issues = new ArrayList<>();
+
+      Integer pageIndex = 0; // Current page
+      JsonIssue obj = null;
+
+      try (CloseableHttpClient client = this.createHttpClient(true)) {
+         do {
+            final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH,
+                  this.addParameters(parameters, new BasicNameValuePair(SonarClientService.PARAM_PAGE_INDEX, String.valueOf(pageIndex + 1))));
+            try {
+               obj = this.get(client, url, JsonIssue.class);
+
+               // Add list of issues extracted from current page
+               issues.addAll(obj.getIssues());
+               pageIndex = obj.getPaging().getPageIndex(); // Current page
+            } catch (final Exception e) {
+               SonarClientService.LOG.error("Error getting issues from URL {}.", url, e);
+               break;
             }
+         } while (issues.size() < obj.getPaging().getTotal());
+      } catch (final Exception e) {
+         final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH, parameters);
+         SonarClientService.LOG.error("Error getting issues from URL {}: {}.", url, e.getMessage(), e);
+      }
 
-        } catch (KeyManagementException | NoSuchAlgorithmException | KeyStoreException | IOException e) {
-            FILE_LOGGER.error("Error authenticating", e);
-        }
+      return issues;
+   }
 
-        return false;
-    }
-
-    private void setAuthHeaders(Collection<String> cookies) {
-		String token = cookies.stream().filter(cookie -> cookie.contains(XSRF_TOKEN)).findFirst().orElse("");
-		String jwt = cookies.stream().filter(cookie -> cookie.contains(JWT_SESSION)).findFirst().orElse("");
-	    this.headers.put(X_XSRF_TOKEN, StringUtils.substringBetween(token, "=", ";"));
-	    this.headers.put("Cookie",jwt);
-
-	    return;
-    }
-
-
-    /**
-     * Update project's issues based on flagged issues list.
-     * 
-     * @param flaggedIssues List of flagged issues
-     * @param project Project name 
-     */
-    public final void copyIssues(List<Issue> flaggedIssues, String project) {
-
-        final  Map<String, List<Issue>> issuesByRuleMap = new HashMap<>();
-        String rule;
-        List<Issue> openIssues;
-
-        int nIssues = flaggedIssues.size();
-        int counter = 0; 
-        int nMatched = 0;
-
-        for (final Issue flaggedIssue : flaggedIssues) {
-
-            counter++;
-            CONSOLE_LOGGER.info("Processing flagged issue {} of {}\r", counter, nIssues);
-
-            // search all open issues with the same rule as the flagged issue
-            rule = flaggedIssue.getRule();
-            if ((openIssues = issuesByRuleMap.get(rule)) == null) {
-                // If there are no issues, launch search query
-                openIssues = getIssuesFromUrl(
-                        this.baseUrl + "/" + API_SEARCH + "?rules=" + rule + "&componentRoots=" + project);
-                issuesByRuleMap.put(rule, openIssues);
+   private CloseableHttpClient createHttpClient(final boolean trustAll) throws KeyManagementException, NoSuchAlgorithmException, KeyStoreException {
+      if (trustAll) {
+         // Accept ALL certificates
+         final SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(null, new TrustStrategy() {
+            @Override
+            public boolean isTrusted(final X509Certificate[] arg0, final String arg1) throws CertificateException {
+               return true;
             }
+         }).build();
+         return HttpClients.custom().setSslcontext(sslContext).setSSLHostnameVerifier(new NoopHostnameVerifier()).build();
+      } else {
+         return HttpClients.createDefault();
+      }
+   }
 
-            // Find open issue with same features (component, rule, line) as
-            // flagged issue
-            final Issue matchOpenIssue = openIssues.stream().filter(openIssue -> openIssue.compare(flaggedIssue)).findAny()
-                    .orElse(null);
+   private <T> T get(final CloseableHttpClient client, final String url, final Class<T> clazz, final NameValuePair... parameters) throws IOException {
+      final HttpGet request = new HttpGet(this.getUrl(url, parameters));
+      this.getAuthenticationHeader().ifPresent(request::addHeader);
 
-            if (matchOpenIssue != null) {
-                nMatched++;
-                updateIssue(matchOpenIssue, flaggedIssue);
-            }
-        }
+      try (CloseableHttpResponse response = client.execute(request)) {
+         final String body = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+         return this.mapper.readValue(body, clazz);
+      }
+   }
 
-        CONSOLE_LOGGER.info("\n{} flagged issues matched.", nMatched);        
-    }
+   private StatusLine post(final CloseableHttpClient client, final String url, final NameValuePair... parameters) throws IOException {
+      final HttpPost request = new HttpPost(url);
+      request.setEntity(new UrlEncodedFormEntity(Arrays.asList(parameters), StandardCharsets.UTF_8));
+      this.getAuthenticationHeader().ifPresent(request::addHeader);
 
-    /**
-     * Update status, resolution, action plans.
-     * 
-     * Transitions: From OPEN      to ["confirm","resolve","falsepositive"] 
-     *              From CONFIRMED to ["unconfirm","resolve","falsepositive"] 
-     *              From REOPENED  to ["confirm","resolve","falsepositive"]
-     * 
-     * @param openIssue
-     * @param flaggedIssue
-     * @return true (updated) or false (not updated)
-     */
-    public final boolean updateIssue(Issue openIssue, Issue flaggedIssue) {
+      try (CloseableHttpResponse response = client.execute(request)) {
+         return response.getStatusLine();
+      }
+   }
 
-        try {
-            Map<String, String> params = new HashMap<>();
+   private NameValuePair[] addParameters(final NameValuePair[] parameters1, final NameValuePair... parameters2) {
+      final List<NameValuePair> parameters = new ArrayList<>();
+      parameters.addAll(Arrays.asList(parameters1));
+      parameters.addAll(Arrays.asList(parameters2));
+      return parameters.toArray(new NameValuePair[parameters.size()]);
+   }
 
-            String flaggedStatus = flaggedIssue.getStatus();
-            String resolution = flaggedIssue.getResolution();
+   private String getUrl(final String url, final NameValuePair... parameters) {
+      final StringBuilder sb = new StringBuilder(url);
+      try {
+         for (final NameValuePair parameter : parameters) {
+            sb.append(sb.toString().contains("?") ? "&" : "?")
+                  .append(parameter.getName()).append("=").append(URLEncoder.encode(parameter.getValue(), StandardCharsets.UTF_8.toString()));
+         }
+      } catch (final UnsupportedEncodingException e) {
+         // ignore - should never happen
+      }
+      return sb.toString();
+   }
 
-            // Compose parameters. First, set issue.
-            if (openIssue.getKey() != null) {
-                params.put("issue", openIssue.getKey());
-            }
-
-            // Then, set transition
-            if (OPEN.equals(openIssue.getStatus()) || REOPENED.equals(openIssue.getStatus())) {
-                if (RESOLVED.equals(flaggedStatus) && FALSE_POSITIVE.equals(resolution)) {
-                    params.put(TRANSITION, "falsepositive");
-                } else if (CONFIRMED.equals(flaggedStatus)) {
-                    params.put(TRANSITION, "confirm");
-                }
-            }
-
-            // Launch url
-            MultiValuedMap<String, String> response = HttpUtils.httpRequest
-                    (baseUrl + "/" + API_DO_TRANSITION, this.headers, params);
-            if (params.size() == 2 && response != null) {
-                return true;
-            }
-        } catch (KeyManagementException | NoSuchAlgorithmException | KeyStoreException | IOException e) {
-            FILE_LOGGER.error("Error updating issue.", e);
-        }
-
-        return false;
-    }
-
-    /**
-     * Get list of issues from URL.
-     * 
-     * @param url
-     *            Sonar Web Api url
-     * @return List of Issue object
-     * 
-     * @throws JsonParseException
-     *             JSON Exception
-     * @throws IOException
-     *             IO Exception
-     */
-    public final List<Issue> getIssuesFromUrl(String url) {
-        // Initialize JSON mappers
-        final ObjectMapper mapper = new ObjectMapper();
-        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-
-        final List<Issue> issues = new ArrayList<>();
-
-        Integer pageIndex = 0; // Current page
-        JsonIssue obj; // JSON object representing server response
-
-        try {
-            do {
-                // Launch HTTP GET Request (no parameters)
-                Collection<String> requestResult = HttpUtils.httpRequest(url + "&pageIndex=" + (pageIndex + 1),
-		                this.headers, null).get("body");
-
-                if (!requestResult.isEmpty()) {
-                    String body = requestResult.iterator().next();
-                    obj = mapper.readValue(body, JsonIssue.class);
-                    // Add list of issues extracted from current page
-                    issues.addAll(obj.getIssues());
-
-                    pageIndex = obj.getPaging().getPageIndex(); // Current page
-                } else {
-                    return null;
-                }
-            } while (issues.size() < obj.getPaging().getTotal() );
-        } catch (KeyManagementException | NoSuchAlgorithmException | KeyStoreException | IOException e) {
-            FILE_LOGGER.error("Error getting issues from URL.", e);
-        }
-
-        return issues;
-    }
-
-    /**
-     * Get a list of issues from CSV file.
-     * 
-     * @param path
-     *            CSV file path
-     * @return List of Issues
-     */
-    public final List<Issue> getIssuesFromFile(final String path) {
-
-        final List<Issue> issues = new ArrayList<>();
-
-        try {
-            final List<String[]> rows = FileUtils.customCSVParser(path);
-
-            // Get col names from first row
-            final String[] cols = rows.get(0);
-
-            if (cols == null || cols.length == 0) {
-                return issues;
-            }
-
-            // Componse map: [Col name, Col position ]
-            Map<String, Integer> positions = new ConcurrentHashMap<>();
-            for (int i = 0; i < cols.length; i++) {
-                positions.put(cols[i], i);
-            }
-
-            // ITerate over CSV rows and add issues to final list.
-            // Skip first row.
-            Issue issue;
-            for (final String[] row : rows.subList(1, rows.size())) {
-                issue = new Issue();
-                issue.setKey(row[positions.get("key")]);
-                issue.setComponent(row[positions.get("component")]);
-                issue.setLine(row[positions.get("line")]);
-                issue.setRule(row[positions.get("rule")]);
-                issue.setSeverity(row[positions.get("severity")]);
-                issue.setStatus(row[positions.get("status")]);
-                issue.setResolution(row[positions.get("resolution")]);
-                issues.add(issue);
-            }
-        } catch (IOException e) {
-            FILE_LOGGER.error("Error getting issues from CSV file.", e);
-        }
-        return issues;
-    }
-
+   private Optional<Header> getAuthenticationHeader() {
+      if (StringUtils.isNotBlank(this.login)) {
+         final String value = this.login + ":" + (StringUtils.isNotBlank(this.password) ? this.password : "");
+         return Optional.of(new BasicHeader("Authorization", "Basic " + Base64.getEncoder().encodeToString((value).getBytes(StandardCharsets.UTF_8))));
+      }
+      return Optional.empty();
+   }
 }

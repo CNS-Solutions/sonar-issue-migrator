@@ -3,107 +3,32 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>org.jmf</groupId>
 	<artifactId>sonar-issue-migrator</artifactId>
-	<version>0.1.1</version>
+	<version>1.0.0</version>
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.source>1.8</maven.compiler.source>
 		<maven.compiler.target>1.8</maven.compiler.target>
-		<sonar.core.codeCoveragePlugin>jacoco</sonar.core.codeCoveragePlugin>
-		<sonar.jacoco.reportPath>${basedir}/target/jacoco-unit.exec</sonar.jacoco.reportPath>
-		<slf4jVersion>1.6.1</slf4jVersion>
+
+		<version.maven-jar-plugin>2.6</version.maven-jar-plugin>
+		<version.maven-assembly-plugin>2.4</version.maven-assembly-plugin>
+
+		<version.commons-cli>1.4</version.commons-cli>
+		<version.log4j>2.13.2</version.log4j>
+		<version.slf4j>1.7.25</version.slf4j>
+		<version.httpclient>4.4</version.httpclient>
+		<version.jackson>2.6.3</version.jackson>
+		<version.junit>4.11</version.junit>
+		<version.commons-lang3>3.0</version.commons-lang3>
 	</properties>
 
-	<dependencies>
-
-		<dependency>
-			<groupId>org.slf4j</groupId>
-			<artifactId>slf4j-api</artifactId>
-			<version>${slf4jVersion}</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.commons</groupId>
-			<artifactId>commons-collections4</artifactId>
-			<version>4.1</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.slf4j</groupId>
-			<artifactId>slf4j-log4j12</artifactId>
-			<version>${slf4jVersion}</version>
-		</dependency>
-
-		<dependency>
-			<groupId>log4j</groupId>
-			<artifactId>log4j</artifactId>
-			<version>1.2.17</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.httpcomponents</groupId>
-			<artifactId>httpclient</artifactId>
-			<version>4.4</version>
-		</dependency>
-
-		<dependency>
-			<groupId>com.fasterxml.jackson.dataformat</groupId>
-			<artifactId>jackson-dataformat-csv</artifactId>
-			<version>2.7.0</version>
-		</dependency>
-
-
-		<dependency>
-			<groupId>com.fasterxml.jackson.core</groupId>
-			<artifactId>jackson-databind</artifactId>
-			<version>2.6.3</version>
-		</dependency>
-
-		<dependency>
-			<groupId>junit</groupId>
-			<artifactId>junit</artifactId>
-			<version>4.11</version>
-			<scope>test</scope>
-		</dependency>
-
-		<!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
-		<dependency>
-			<groupId>org.apache.commons</groupId>
-			<artifactId>commons-lang3</artifactId>
-			<version>3.0</version>
-		</dependency>
-
-	</dependencies>
-
 	<build>
-
 		<plugins>
-			<plugin>
-				<groupId>org.jacoco</groupId>
-				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>0.7.9</version>
-				<executions>
-					<!-- prepare agent for measuring unit tests -->
-					<execution>
-						<id>prepare-unit-tests</id>
-						<goals>
-							<goal>prepare-agent</goal>
-						</goals>
-						<configuration>
-							<destFile>${sonar.jacoco.reportPath}</destFile>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-
-			<!-- Generate executable JAR file -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-jar-plugin</artifactId>
-				<version>2.6</version>
+				<version>${version.maven-jar-plugin}</version>
 				<configuration>
-					<finalName>SonarIssueMigrator</finalName>
-					<outputDirectory>${project.build.directory}/assembly</outputDirectory>
 					<archive>
 						<manifest>
 							<addClasspath>true</addClasspath>
@@ -121,82 +46,91 @@
 				</configuration>
 			</plugin>
 
-
-			<!-- Copy external dependencies jars to /assembly/lib folder -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-dependency-plugin</artifactId>
-				<version>2.5.1</version>
-				<executions>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<version>${version.maven-assembly-plugin}</version>
+   				<executions>
 					<execution>
-						<id>copy-dependencies</id>
-						<phase>package</phase>
+						<id>standalone</id>
 						<goals>
-							<goal>copy-dependencies</goal>
-						</goals>
+							<goal>single</goal>
+						</goals>						
+						<phase>package</phase>
 						<configuration>
-							<!-- exclude junit, we need runtime dependency only -->
-							<includeScope>runtime</includeScope>
-							<outputDirectory>${project.build.directory}/assembly/lib/</outputDirectory>
+							<finalName>${project.name}</finalName>
+							<descriptors>
+								<descriptor>src/main/assembly/assembly.xml</descriptor>
+							</descriptors>
+							<archive>
+								<manifest>
+									<mainClass>org.jmf.client.CommandLineClient</mainClass>
+								</manifest>
+							</archive>
 						</configuration>
 					</execution>
 				</executions>
 			</plugin>
-
-
-			<!-- Generate deliverable zip -->
-			<!-- IMPORTANT: this plugin should be executed after two previous plugins. 
-				So, order is important! -->
-			<plugin>
-				<artifactId>maven-assembly-plugin</artifactId>
-				<version>2.2-beta-5</version>
-				<configuration>
-					<descriptors>
-						<descriptor>src/main/assembly/assembly.xml</descriptor>
-					</descriptors>
-					<finalName>${project.name}</finalName>
-				</configuration>
-				<executions>
-					<execution>
-						<id>make-assembly</id> <!-- this is used for inheritance merges -->
-						<phase>package</phase> <!-- append to the packaging phase. -->
-						<goals>
-							<goal>single</goal> <!-- goals == mojos -->
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-
 		</plugins>
-
-		<!-- Copy properties files to /assembly/conf folder, which will be used 
-			to generate final zip -->
-		<resources>
-			<resource>
-				<filtering>false</filtering>
-				<directory>${project.basedir}/src/main/resources</directory>
-				<targetPath>${project.build.directory}/assembly/conf</targetPath>
-				<includes>
-					<include>*.properties</include>
-				</includes>
-			</resource>
-		</resources>
-
 	</build>
 
-	<profiles>
-		<profile>
-			<id>sonar</id>
-			<activation>
-				<activeByDefault>true</activeByDefault>
-			</activation>
-			<properties>
-				<!-- Optional URL to server. Default value is http://localhost:9000 -->
-				<sonar.host.url>
-					http://localhost:9000
-				</sonar.host.url>
-			</properties>
-		</profile>
-	</profiles>
+	<dependencies>
+
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<version>${version.slf4j}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>commons-cli</groupId>
+			<artifactId>commons-cli</artifactId>
+			<version>${version.commons-cli}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-lang3</artifactId>
+			<version>${version.commons-lang3}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.logging.log4j</groupId>
+			<artifactId>log4j-api</artifactId>
+			<version>${version.log4j}</version>
+		</dependency>
+		
+		<dependency>
+			<groupId>org.apache.logging.log4j</groupId>
+			<artifactId>log4j-core</artifactId>
+			<version>${version.log4j}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.logging.log4j</groupId>
+			<artifactId>log4j-slf4j-impl</artifactId>
+			<version>${version.log4j}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.httpcomponents</groupId>
+			<artifactId>httpclient</artifactId>
+			<version>${version.httpclient}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<version>${version.jackson}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>${version.junit}</version>
+			<scope>test</scope>
+		</dependency>
+
+	</dependencies>
 
 </project>

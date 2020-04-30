@@ -1,124 +1,129 @@
+/*******************************************************************************
+ ** COPYRIGHT: CNS-Solutions & Support GmbH
+ **            Member of Frequentis Group
+ **            Innovationsstrasse 1
+ **            A-1100 Vienna
+ **            AUSTRIA
+ **            Tel. +43 1 81150-0
+ ** LANGUAGE:  Java, J2SE JDK
+ **
+ ** The copyright to the computer program(s) herein is the property of
+ ** CNS-Solutions & Support GmbH, Austria. The program(s) shall not be used
+ ** and/or copied without the written permission of CNS-Solutions & Support GmbH.
+ *******************************************************************************/
 package org.jmf.vo;
 
 import java.util.List;
 
-import org.apache.commons.lang3.StringUtils;
-
 /**
  * Represents a SonarQube issue.
- * 
- * @author jose
  *
+ * @author jose
  */
 public final class Issue {
 
-    private String key;
+   private String key;
 
-    private String component;
+   private String component;
 
-    private String rule;
+   private String rule;
 
-    private String status;
+   private String status;
 
-    private String resolution;
+   private String resolution;
 
-    private String severity;
+   private String severity;
 
-    private String line;
+   private Integer line;
 
-    private String actionPlan;
-    
-    private List<Comment> comments;
-    
-    public String getActionPlan() {
-        return actionPlan;
-    }
+   private String actionPlan;
 
-    
-    public List<Comment> getComments() {
-        return comments;
-    }
+   private String assignee;
 
-    public void setComments(List<Comment> comments) {
-        this.comments = comments;
-    } 
-    
-    
-    public void setActionPlan(String actionPlan) {
-        this.actionPlan = actionPlan;
-    }
+   private List<Comment> comments;
 
+   public String getActionPlan() {
+      return this.actionPlan;
+   }
 
-    public String getKey() {
-        return key;
-    }
+   public List<Comment> getComments() {
+      return this.comments;
+   }
 
-    public String getComponent() {
-        return component;
-    }
+   public void setComments(final List<Comment> comments) {
+      this.comments = comments;
+   }
 
-    public String getRule() {
-        return rule;
-    }
+   public void setActionPlan(final String actionPlan) {
+      this.actionPlan = actionPlan;
+   }
 
-    public String getStatus() {
-        return status;
-    }
+   public String getKey() {
+      return this.key;
+   }
 
-    public String getSeverity() {
-        return severity;
-    }
+   public String getComponent() {
+      return this.component;
+   }
 
-    public String getLine() {
-        return line;
-    }
+   public String getRule() {
+      return this.rule;
+   }
 
-    public void setKey(String key) {
-        this.key = key;
-    }
+   public String getStatus() {
+      return this.status;
+   }
 
-    public void setComponent(String component) {
-        this.component = component;
-    }
+   public String getSeverity() {
+      return this.severity;
+   }
 
-    public void setRule(String rule) {
-        this.rule = rule;
-    }
+   public Integer getLine() {
+      return this.line;
+   }
 
-    public void setStatus(String status) {
-        this.status = status;
-    }
+   public void setKey(final String key) {
+      this.key = key;
+   }
 
-    public void setSeverity(String severity) {
-        this.severity = severity;
-    }
+   public void setComponent(final String component) {
+      this.component = component;
+   }
 
-    public void setLine(String line) {
-        this.line = line;
-    }
+   public void setRule(final String rule) {
+      this.rule = rule;
+   }
 
-    public String getParsedComponent() {
-        return this.component == null ? "" : this.component.replaceAll(".*:", "");
-    }
+   public void setStatus(final String status) {
+      this.status = status;
+   }
 
-    public String getResolution() {
-        return resolution;
-    }
+   public void setSeverity(final String severity) {
+      this.severity = severity;
+   }
 
-    public void setResolution(String resolution) {
-        this.resolution = resolution;
-    }
+   public void setLine(final Integer line) {
+      this.line = line;
+   }
 
-    public boolean compare(Issue issue) {
-        if (issue == null || 
-                !StringUtils.isNotEmpty(issue.getLine()) || 
-                    !StringUtils.isNotEmpty(issue.getRule())) {
-            return false;
-        } else {
-            return issue.getLine().equals(this.line) && issue.getParsedComponent().equals(getParsedComponent())
-                    && issue.getRule().equals(this.rule);
-        }
+   public String getParsedComponent() {
+      return this.component == null ? "" : this.component.replaceAll(".*:", "");
+   }
 
-    }
+   public String getResolution() {
+      return this.resolution;
+   }
+
+   public void setResolution(final String resolution) {
+      this.resolution = resolution;
+   }
+
+   public String getAssignee() {
+      return this.assignee;
+   }
+
+   public void setAssignee(final String assignee) {
+      this.assignee = assignee;
+   }
 
 }
