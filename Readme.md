@@ -34,7 +34,7 @@ So, now we have:
 As a developer, I want to flag the issues in the 'Project_A Production' branch before starting to change code, so that the new analysis contains the same "flags" 
 (Confirmed, False Positive, Won't Fix) including the comments as the original one.
 
-That is what this tool is for.
+That is what this tool is for. 
 
 # Requirements
 
