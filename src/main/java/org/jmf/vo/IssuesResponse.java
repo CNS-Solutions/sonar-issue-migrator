@@ -2,7 +2,7 @@ package org.jmf.vo;
 
 import java.util.List;
 
-public final class JsonIssue {
+public final class IssuesResponse {
     
     private Boolean maxResultsReached;
     

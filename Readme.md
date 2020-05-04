@@ -1,8 +1,15 @@
 # Introduction
 
-Command-line tool to copy issue features (status, resolution) from one SonarQube project to another. 
+Command-line tool to copy
+* project settings 
+* issue features (status, resolution) from one SonarQube project to another. 
 
 Both projects (source and target) can be on **different** SonarQube servers.
+
+Project settings currently covered:
+
+- Assigned quality profiles
+- General project settings
 
 Issue features currently covered:
 
@@ -64,6 +71,7 @@ Options:
   -mc,--migrate-confirmed              Migrate confirmed
   -mf,--migrate-false-positive         Migrate resolved/false-positive
   -mo,--migrate-comments               Migrate comments
+  -mp,--migrate-project                Migrate project settings
   -mw,--migrate-wont-fix               Migrate resolved/won't fix
   -sc,--source-component <key>         Source component key, e.g. project key
   -sl,--source-login <user-or-token>   Login user name or token for source
@@ -76,16 +84,23 @@ Options:
   -tu,--target-url <url>               URL of target SonarQube - if not set, the source URL is used
 ```
 
-If none of the migration options are given, all are enabled.
+If none of the migration options are given, all issue related migration options are enabled.
 
 The projects need to be identical or at least very similar to map the issues, as the matching of issues is by file name and line number.
 If there are small changes between the projects, you might want to set a delta line number greater than 0.
 
 Whenever possible, you should use a security token (which you can create from your SonarQube account page) instead of user name/password.
-To update the issue status, you need the permission "Administer Issues" in SonarQube.
+To update the project settings, you need the permission "Administer Quality Profiles", the edit right on the quality profiles and the administration right on the target project. 
+To update the issue status, you need the permission "Administer Issues" in SonarQube for the target project.
 The original creator of the comments will be lost, as all comments are marked as added by the user used for the migration.
 
 # Examples
+
+To copy a project from `com.test:prj1` to project/branch `com.test:prj1-branch` (the new project is created if necessary), use:
+
+```
+> java -jar sonar-issue-migrator-standalone.jar -su https://sonar.test.com -sc com.test:prj1 -tc com.test:prj1-branch -tl 21... -mp
+```
 
 To migrate the issue status from project `com.test:prj1` to project/branch `com.test:prj1-branch`, use:
 
@@ -99,13 +114,15 @@ To migrate resolutions and comments from one server to another one, use:
 > java -jar sonar-issue-migrator-standalone.jar -su https://sonar1.test.com -sc com.test:prj1 -tu https://sonar2.test.com -tl 21...
 ```
 
+# Steps to copy a project
 
+The following steps detail, how to copy a project `com.test:prj1` to a new project/branch `com.test:prj1-branch` with all settings and migrate the issue status of all manually confirmed/resolved issues along with the comments:
 
-
-Steps to copy issues from Project_A to Project_B:
-
-1. Run SonarQube analysis on Project_A:branch_A (note: using Sonar branches is optional) 
-2. Run SonarQube analysis on Project_B:branch_B (note: using Sonar branches is optional). **IMPORTANT: source code of Project_A and Project_B should be as similar as possible to each other**.
-3. Run sonar-issue-migrator-standalone.jar.
+1. Copy the project settings using this tool with options `-su ... -sc com.test:prj1 -tc com.test:prj1-branch -tl ... -mp`
+2. Adjust project settings not migrated with the tool, e.g. permissions, quality gates, etc.
+3. Run the analysis, e.g. with Jenkins. Make sure to specify `-Dsonar.projectKey=com.test:prj1-branch -Dsonar.projectName=...` with a maven build, so that the analysis is done in the new project (you could also set the maven group ID and artifactID to the new values).
+4. Check that the analysis was completed on the SonarQube server
+5. Migrate the manual issue states using this tool with options `-su ... -sc com.test:prj1 -tc com.test:prj1-branch -tl ... -mc -mf -mw -mo`
+6. Check the project on the SonarQube server: the issue states should be updated
 
 

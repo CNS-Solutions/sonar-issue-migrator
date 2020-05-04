@@ -25,10 +25,12 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import javax.net.ssl.SSLContext;
@@ -52,7 +54,11 @@ import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.util.EntityUtils;
 import org.jmf.vo.Comment;
 import org.jmf.vo.Issue;
-import org.jmf.vo.JsonIssue;
+import org.jmf.vo.IssuesResponse;
+import org.jmf.vo.QualityProfile;
+import org.jmf.vo.QualityProfilesResponse;
+import org.jmf.vo.Setting;
+import org.jmf.vo.SettingsResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,13 +93,25 @@ public class SonarClientService {
 
    private static final Logger LOG = LoggerFactory.getLogger(SonarClientService.class);
 
-   private static final String API_SEARCH = "api/issues/search";
+   private static final String API_SEARCH_ISSUES = "api/issues/search";
 
    private static final String API_DO_TRANSITION = "api/issues/do_transition";
 
    private static final String API_ADD_COMMENT = "api/issues/add_comment";
 
    private static final String API_ASSIGN = "api/issues/assign";
+
+   private static final String API_SETTINGS = "api/settings/values";
+
+   private static final String API_SET = "api/settings/set";
+
+   private static final String API_RESET = "api/settings/reset";
+
+   private static final String API_CREATE_PROJECT = "api/projects/create";
+
+   private static final String API_SEARCH_QUALITY_PROFILES = "api/qualityprofiles/search";
+
+   private static final String API_ADD_PROJECT_TO_QUALITY_PROFILE = "api/qualityprofiles/add_project";
 
    private static final String PARAM_ISSUE = "issue";
 
@@ -114,6 +132,26 @@ public class SonarClientService {
    private static final String PARAM_PAGE_INDEX = "pageIndex";
 
    private static final String PARAM_ADDITIONAL_FIELDS = "additionalFields";
+
+   private static final String PARAM_COMPONENT = "component";
+
+   private static final String PARAM_KEY = "key";
+
+   private static final String PARAM_KEYS = "keys";
+
+   private static final String PARAM_VALUE = "value";
+
+   private static final String PARAM_VALUES = "values";
+
+   private static final String PARAM_FIELD_VALUES = "fieldValues";
+
+   private static final String PARAM_PROJECT = "project";
+
+   private static final String PARAM_NAME = "name";
+
+   private static final String PARAM_QUALITY_PROFILE = "qualityProfile";
+
+   private static final String PARAM_LANGUAGE = "language";
 
    private static final String TRANSITION_CONFIRM = "confirm";
 
@@ -147,7 +185,6 @@ public class SonarClientService {
       this.password = password;
       this.readonly = readonly;
       this.mapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-
    }
 
    /**
@@ -161,7 +198,7 @@ public class SonarClientService {
     * @param migrateWontFixes if unresolved issues should be resolved as wontfix, if the source issue is a wontfix
     * @param addComments if comments should be migrated, too
     */
-   public final void updateIssues(final String componentKey, final List<Issue> sourceIssues, final int deltaLines,
+   public void updateIssues(final String componentKey, final List<Issue> sourceIssues, final int deltaLines,
          final boolean migrateConfirmed, final boolean migrateFalsePositives, final boolean migrateWontFixes, final boolean addComments) {
       final Map<String, List<Issue>> issuesByRuleMap = new HashMap<>();
 
@@ -233,7 +270,7 @@ public class SonarClientService {
          }
          SonarClientService.LOG.info("Processed {} issues: {} updated, {} unmatched.", processed, updated, unmatched);
       } catch (final Exception e) {
-         SonarClientService.LOG.error("Error updating issues", e);
+         SonarClientService.LOG.error("Error updating issues: {}", e.getMessage(), e);
       }
    }
 
@@ -345,14 +382,14 @@ public class SonarClientService {
       final List<Issue> issues = new ArrayList<>();
 
       Integer pageIndex = 0; // Current page
-      JsonIssue obj = null;
+      IssuesResponse obj = null;
 
       try (CloseableHttpClient client = this.createHttpClient(true)) {
          do {
-            final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH,
+            final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH_ISSUES,
                   this.addParameters(parameters, new BasicNameValuePair(SonarClientService.PARAM_PAGE_INDEX, String.valueOf(pageIndex + 1))));
             try {
-               obj = this.get(client, url, JsonIssue.class);
+               obj = this.get(client, url, IssuesResponse.class);
 
                // Add list of issues extracted from current page
                issues.addAll(obj.getIssues());
@@ -363,11 +400,213 @@ public class SonarClientService {
             }
          } while (issues.size() < obj.getPaging().getTotal());
       } catch (final Exception e) {
-         final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH, parameters);
+         final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH_ISSUES, parameters);
          SonarClientService.LOG.error("Error getting issues from URL {}: {}.", url, e.getMessage(), e);
       }
 
       return issues;
+   }
+
+   /**
+    * Update the settings
+    *
+    * @param componentKey the project key
+    * @param sourceSettings the settings of the source project
+    * @param sourceProfiles the quality profiles of the source project
+    */
+   public void updateSettings(final String componentKey, final List<Setting> sourceSettings, final List<QualityProfile> sourceProfiles) {
+      try (CloseableHttpClient client = this.createHttpClient(true)) {
+
+         List<Setting> targetSettings = this.getSettings(componentKey);
+         if (targetSettings == null) {
+            this.createProject(client, componentKey);
+            targetSettings = this.getSettings(componentKey);
+         }
+         final Map<String, Setting> targetSettingsByKey = targetSettings.stream()
+               .collect(Collectors.toMap(Setting::getKey, Function.identity()));
+
+         for (final Setting sourceSetting : sourceSettings) {
+            final Setting targetSetting = targetSettingsByKey.remove(sourceSetting.getKey());
+            if (targetSetting == null) {
+               if (sourceSetting.getValue() != null) {
+                  this.setSetting(client, componentKey, sourceSetting.getKey(), sourceSetting.getValue());
+               } else if (sourceSetting.getValues() != null) {
+                  this.setSetting(client, componentKey, sourceSetting.getKey(), sourceSetting.getValues());
+               } else if (sourceSetting.getFieldValues() != null) {
+                  this.setSetting(client, componentKey, sourceSetting.getKey(), sourceSetting.getFieldValues());
+               }
+            } else if (sourceSetting.getValue() != null && !sourceSetting.getValue().equals(targetSetting.getValue())) {
+               SonarClientService.LOG.info("Changing setting {}: {} -> {}", sourceSetting.getKey(), targetSetting.getValue(), sourceSetting.getValue());
+               this.setSetting(client, componentKey, sourceSetting.getKey(), sourceSetting.getValue());
+            } else if (sourceSetting.getValues() != null && !sourceSetting.getValues().equals(targetSetting.getValues())) {
+               SonarClientService.LOG.info("Changing setting {}: {} -> {}", sourceSetting.getKey(), targetSetting.getValues(), sourceSetting.getValues());
+               this.setSetting(client, componentKey, sourceSetting.getKey(), sourceSetting.getValues());
+            } else if (sourceSetting.getFieldValues() != null && !sourceSetting.getFieldValues().equals(targetSetting.getFieldValues())) {
+               SonarClientService.LOG.info("Changing setting {}: {} -> {}", sourceSetting.getKey(), targetSetting.getFieldValues(), sourceSetting.getFieldValues());
+               this.setSetting(client, componentKey, sourceSetting.getKey(), sourceSetting.getFieldValues());
+            }
+         }
+
+         if (!targetSettingsByKey.isEmpty()) {
+            final String[] keys = targetSettingsByKey.keySet().stream().toArray(String[]::new);
+            this.resetSetting(client, componentKey, keys);
+         }
+
+         final List<QualityProfile> targetProfiles = this.getQualityProfiles(componentKey);
+         final Map<String, QualityProfile> targetProfilesByLanguage = targetProfiles.stream()
+               .collect(Collectors.toMap(QualityProfile::getLanguage, Function.identity()));
+
+         for (final QualityProfile sourceProfile : sourceProfiles) {
+            final QualityProfile targetProfile = targetProfilesByLanguage.get(sourceProfile.getLanguage());
+            if (targetProfile == null || !sourceProfile.getName().equals(targetProfile.getName())) {
+               this.setQualityProfile(client, componentKey, sourceProfile.getName(), sourceProfile.getLanguage());
+            }
+         }
+
+         SonarClientService.LOG.info("Settings for {} updated successfully", componentKey);
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error setting settings: {}", e.getMessage(), e);
+      }
+   }
+
+   /**
+    * Get the settings for a component.
+    *
+    * @param componentKey the key of the component
+    * @return the settings (or null if nothing found)
+    */
+   public List<Setting> getSettings(final String componentKey) {
+      final String url = this.getUrl(this.baseUrl + SonarClientService.API_SETTINGS,
+            new BasicNameValuePair(SonarClientService.PARAM_COMPONENT, componentKey));
+      try (CloseableHttpClient client = this.createHttpClient(true)) {
+         final SettingsResponse obj = this.get(client, url, SettingsResponse.class);
+         return obj.getSettings();
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error getting settings from URL {}: {}.", url, e.getMessage(), e);
+      }
+      return null;
+   }
+
+   /** not yet used */
+   private boolean createProject(final CloseableHttpClient client, final String componentKey) {
+      if (this.readonly) {
+         SonarClientService.LOG.info("Project {} would be created", componentKey);
+         return true;
+      }
+      try {
+         final StatusLine statusLine = this.post(client, this.baseUrl + SonarClientService.API_CREATE_PROJECT,
+               new BasicNameValuePair(SonarClientService.PARAM_PROJECT, componentKey),
+               new BasicNameValuePair(SonarClientService.PARAM_NAME, "Project " + componentKey));
+         if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
+            SonarClientService.LOG.info("Project {} created", componentKey);
+            return true;
+         } else {
+            SonarClientService.LOG.error("Error creating project {}: {}", componentKey, statusLine);
+         }
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error creating project {}: {}", componentKey, e.getMessage(), e);
+      }
+      return false;
+   }
+
+   private boolean setSetting(final CloseableHttpClient client, final String componentKey, final String key, final Object value) {
+      if (this.readonly) {
+         SonarClientService.LOG.info("Setting {} would be updated to '{}'", key, value);
+         return true;
+      }
+      try {
+         StatusLine statusLine = null;
+         if (value instanceof String) {
+            statusLine = this.post(client, this.baseUrl + SonarClientService.API_SET,
+                  new BasicNameValuePair(SonarClientService.PARAM_COMPONENT, componentKey),
+                  new BasicNameValuePair(SonarClientService.PARAM_KEY, key),
+                  new BasicNameValuePair(SonarClientService.PARAM_VALUE, value.toString()));
+         } else if (value instanceof Collection<?> && !((Collection<?>) value).isEmpty()) {
+            final List<?> values = new ArrayList<>((Collection<?>) value);
+            final List<NameValuePair> params = new ArrayList<>();
+            params.add(new BasicNameValuePair(SonarClientService.PARAM_COMPONENT, componentKey));
+            params.add(new BasicNameValuePair(SonarClientService.PARAM_KEY, key));
+            if (values.get(0) instanceof String) {
+               values.forEach(v -> params.add(new BasicNameValuePair(SonarClientService.PARAM_VALUES, v.toString())));
+            } else {
+               for (final Object v : values) {
+                  params.add(new BasicNameValuePair(SonarClientService.PARAM_FIELD_VALUES, this.mapper.writeValueAsString(v)));
+               }
+            }
+            statusLine = this.post(client, this.baseUrl + SonarClientService.API_SET, params.toArray(new NameValuePair[params.size()]));
+         }
+         if (statusLine != null && statusLine.getStatusCode() == HttpStatus.SC_NO_CONTENT) {
+            SonarClientService.LOG.info("Setting {} updated to '{}'", key, value);
+            return true;
+         } else {
+            SonarClientService.LOG.error("Error updating setting {} to '{}': {}", key, value, statusLine);
+         }
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error updating setting {} to '{}': {}", key, value, e.getMessage(), e);
+      }
+      return false;
+   }
+
+   private boolean resetSetting(final CloseableHttpClient client, final String componentKey, final String... keys) {
+      if (this.readonly) {
+         SonarClientService.LOG.info("Settings {} would be reset", String.join(", ", keys));
+         return true;
+      }
+      try {
+         final StatusLine statusLine = this.post(client, this.baseUrl + SonarClientService.API_RESET,
+               new BasicNameValuePair(SonarClientService.PARAM_COMPONENT, componentKey),
+               new BasicNameValuePair(SonarClientService.PARAM_KEYS, String.join(",", keys)));
+         if (statusLine.getStatusCode() == HttpStatus.SC_NO_CONTENT) {
+            SonarClientService.LOG.info("Settings {} reset", String.join(", ", keys));
+            return true;
+         } else {
+            SonarClientService.LOG.error("Error resetting settings {}: {}", String.join(", ", keys), statusLine);
+         }
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error resetting settings {}: {}", String.join(", ", keys), e.getMessage(), e);
+      }
+      return false;
+   }
+
+   /**
+    * Get the quality profiles for a project.
+    *
+    * @param componentKey the key of the project
+    * @return the quality profiles (or null if the project does not exist)
+    */
+   public List<QualityProfile> getQualityProfiles(final String componentKey) {
+      final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH_QUALITY_PROFILES,
+            new BasicNameValuePair(SonarClientService.PARAM_PROJECT, componentKey));
+      try (CloseableHttpClient client = this.createHttpClient(true)) {
+         final QualityProfilesResponse obj = this.get(client, url, QualityProfilesResponse.class);
+         return obj.getProfiles();
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error getting quality profiles for project {}: {}.", componentKey, e.getMessage(), e);
+      }
+      return null;
+   }
+
+   private boolean setQualityProfile(final CloseableHttpClient client, final String componentKey, final String name, final String language) {
+      if (this.readonly) {
+         SonarClientService.LOG.info("Project {} language {} would be set to use quality profile {}", componentKey, language, name);
+         return true;
+      }
+      try {
+         final StatusLine statusLine = this.post(client, this.baseUrl + SonarClientService.API_ADD_PROJECT_TO_QUALITY_PROFILE,
+               new BasicNameValuePair(SonarClientService.PARAM_PROJECT, componentKey),
+               new BasicNameValuePair(SonarClientService.PARAM_LANGUAGE, language),
+               new BasicNameValuePair(SonarClientService.PARAM_QUALITY_PROFILE, name));
+         if (statusLine.getStatusCode() == HttpStatus.SC_NO_CONTENT) {
+            SonarClientService.LOG.info("Project {} language {} set to use quality profile {}", componentKey, language, name);
+            return true;
+         } else {
+            SonarClientService.LOG.error("Error setting quality profile {} for project {} language {}: {}", name, componentKey, language, statusLine);
+         }
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error setting quality profile {} for project {} language {}: {}", name, componentKey, language, e.getMessage(), e);
+      }
+      return false;
+
    }
 
    private CloseableHttpClient createHttpClient(final boolean trustAll) throws KeyManagementException, NoSuchAlgorithmException, KeyStoreException {

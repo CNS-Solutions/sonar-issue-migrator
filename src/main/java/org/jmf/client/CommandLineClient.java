@@ -40,6 +40,8 @@ import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFact
 import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 import org.jmf.services.SonarClientService;
 import org.jmf.vo.Issue;
+import org.jmf.vo.QualityProfile;
+import org.jmf.vo.Setting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -92,6 +94,19 @@ public final class CommandLineClient {
             CommandLineClient.help();
          }
 
+         final boolean dryRun = cl.hasOption("d");
+         final boolean migrateProject = cl.hasOption("mp");
+
+         if (migrateProject) {
+            SonarClientService service = new SonarClientService(sourceUrl, sourceLogin, sourcePassword, true);
+            final List<Setting> sourceSettings = service.getSettings(sourceComponentKey);
+            final List<QualityProfile> sourceProfilies = service.getQualityProfiles(sourceComponentKey);
+
+            service = new SonarClientService(targetUrl, targetLogin, targetPassword, dryRun);
+            service.updateSettings(targetComponentKey, sourceSettings, sourceProfilies);
+            return;
+         }
+
          boolean migrateConfirmed = cl.hasOption("mc");
          boolean migrateFalsePositive = cl.hasOption("mf");
          boolean migrateWontFix = cl.hasOption("mw");
@@ -109,8 +124,6 @@ public final class CommandLineClient {
          }
 
          final int lineDelta = Optional.ofNullable(cl.getOptionValue("dl")).map(Integer::valueOf).orElse(0);
-
-         final boolean dryRun = cl.hasOption("d");
 
          SonarClientService service = new SonarClientService(sourceUrl, sourceLogin, sourcePassword, true);
 
@@ -229,6 +242,10 @@ public final class CommandLineClient {
             .hasArg()
             .argName("delta")
             .desc("Maximum delta of line numbers (default 0)")
+            .build());
+      options.addOption(Option.builder("mp")
+            .longOpt("migrate-project")
+            .desc("Migrate project settings")
             .build());
       options.addOption(Option.builder("mc")
             .longOpt("migrate-confirmed")
