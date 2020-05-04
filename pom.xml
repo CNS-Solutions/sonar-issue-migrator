@@ -21,6 +21,14 @@
 		<version.junit>4.11</version.junit>
 		<version.commons-lang3>3.0</version.commons-lang3>
 	</properties>
+	
+	<distributionManagement>
+		<repository>
+			<id>github</id>
+			<name>GitHub Packages</name>
+			<url>https://maven.pkg.github.com/CNS-Solutions/sonar-issue-migrator</url>
+		</repository>
+	</distributionManagement>
 
 	<build>
 		<plugins>
