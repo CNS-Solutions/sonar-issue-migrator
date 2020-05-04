@@ -207,7 +207,7 @@ public class SonarClientService {
       int updated = 0;
       int unmatched = 0;
 
-      SonarClientService.LOG.info("Processing {} issues...", total);
+      SonarClientService.LOG.info("Processing {} issues for project {}...", total, componentKey);
       try (CloseableHttpClient client = this.createHttpClient(true)) {
          for (final Issue sourceIssue : sourceIssues) {
             final String rule = sourceIssue.getRule();
@@ -268,7 +268,7 @@ public class SonarClientService {
             processed++;
             SonarClientService.LOG.info("Processed {} and updated {} of {} issues", processed, updated, total);
          }
-         SonarClientService.LOG.info("Processed {} issues: {} updated, {} unmatched.", processed, updated, unmatched);
+         SonarClientService.LOG.info("Processed {} issues of project {}: {} updated, {} unmatched.", processed, componentKey, updated, unmatched);
       } catch (final Exception e) {
          SonarClientService.LOG.error("Error updating issues: {}", e.getMessage(), e);
       }
@@ -588,7 +588,7 @@ public class SonarClientService {
 
    private boolean setQualityProfile(final CloseableHttpClient client, final String componentKey, final String name, final String language) {
       if (this.readonly) {
-         SonarClientService.LOG.info("Project {} language {} would be set to use quality profile {}", componentKey, language, name);
+         SonarClientService.LOG.info("Quality profile for language {} would be set to {}", language, name);
          return true;
       }
       try {
@@ -597,13 +597,13 @@ public class SonarClientService {
                new BasicNameValuePair(SonarClientService.PARAM_LANGUAGE, language),
                new BasicNameValuePair(SonarClientService.PARAM_QUALITY_PROFILE, name));
          if (statusLine.getStatusCode() == HttpStatus.SC_NO_CONTENT) {
-            SonarClientService.LOG.info("Project {} language {} set to use quality profile {}", componentKey, language, name);
+            SonarClientService.LOG.info("Quality profile for language {} set to {}", language, name);
             return true;
          } else {
-            SonarClientService.LOG.error("Error setting quality profile {} for project {} language {}: {}", name, componentKey, language, statusLine);
+            SonarClientService.LOG.error("Error setting quality profile {} for language {}: {}", name, language, statusLine);
          }
       } catch (final Exception e) {
-         SonarClientService.LOG.error("Error setting quality profile {} for project {} language {}: {}", name, componentKey, language, e.getMessage(), e);
+         SonarClientService.LOG.error("Error setting quality profile {} for language {}: {}", name, language, e.getMessage(), e);
       }
       return false;
 
