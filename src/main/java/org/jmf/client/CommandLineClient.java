@@ -100,10 +100,10 @@ public final class CommandLineClient {
          if (migrateProject) {
             SonarClientService service = new SonarClientService(sourceUrl, sourceLogin, sourcePassword, true);
             final List<Setting> sourceSettings = service.getSettings(sourceComponentKey);
-            final List<QualityProfile> sourceProfilies = service.getQualityProfiles(sourceComponentKey);
+            final List<QualityProfile> sourceProfiles = service.getQualityProfiles(sourceComponentKey);
 
             service = new SonarClientService(targetUrl, targetLogin, targetPassword, dryRun);
-            service.updateSettings(targetComponentKey, sourceSettings, sourceProfilies);
+            service.updateSettings(targetComponentKey, sourceSettings, sourceProfiles);
             return;
          }
 
