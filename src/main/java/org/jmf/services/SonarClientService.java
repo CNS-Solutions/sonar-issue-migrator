@@ -213,6 +213,7 @@ public class SonarClientService {
             final String rule = sourceIssue.getRule();
             final List<Issue> ruleIssues = issuesByRuleMap.computeIfAbsent(rule, r -> this.getIssuesForRule(componentKey, r));
             final Issue targetIssue = ruleIssues.stream()
+                  .filter(issue -> issue.getLine() != null) // closed issues
                   .filter(issue -> issue.getParsedComponent().equals(sourceIssue.getParsedComponent()))
                   .filter(issue -> Math.abs(issue.getLine() - sourceIssue.getLine()) <= deltaLines)
                   .sorted((issue1, issue2) -> Math.abs(issue1.getLine() - sourceIssue.getLine()) - Math.abs(issue2.getLine() - sourceIssue.getLine()))
