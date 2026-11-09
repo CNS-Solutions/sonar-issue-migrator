@@ -1,16 +1,3 @@
-/*******************************************************************************
- ** COPYRIGHT: CNS-Solutions & Support GmbH
- **            Member of Frequentis Group
- **            Innovationsstrasse 1
- **            A-1100 Vienna
- **            AUSTRIA
- **            Tel. +43 1 81150-0
- ** LANGUAGE:  Java, J2SE JDK
- **
- ** The copyright to the computer program(s) herein is the property of
- ** CNS-Solutions & Support GmbH, Austria. The program(s) shall not be used
- ** and/or copied without the written permission of CNS-Solutions & Support GmbH.
- *******************************************************************************/
 package org.jmf.services;
 
 import java.io.IOException;
@@ -29,8 +16,10 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import javax.net.ssl.SSLContext;
@@ -53,12 +42,19 @@ import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.util.EntityUtils;
 import org.jmf.vo.Comment;
+import org.jmf.vo.Component;
+import org.jmf.vo.ComponentsResponse;
+import org.jmf.vo.Group;
+import org.jmf.vo.GroupsResponse;
 import org.jmf.vo.Issue;
 import org.jmf.vo.IssuesResponse;
+import org.jmf.vo.PagingResponse;
 import org.jmf.vo.QualityProfile;
 import org.jmf.vo.QualityProfilesResponse;
 import org.jmf.vo.Setting;
 import org.jmf.vo.SettingsResponse;
+import org.jmf.vo.User;
+import org.jmf.vo.UsersResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -91,7 +87,30 @@ public class SonarClientService {
    /** resolution won't fix */
    public static final String RESOLUTION_WONT_FIX = "WONTFIX";
 
+   /** permission to browse */
+   public static final String PERMISSION_USER = "user";
+
+   /** permission to see source code */
+   public static final String PERMISSION_CODE_VIEWER = "codeviewer";
+
+   /** permission to administer issues */
+   public static final String PERMISSION_ISSUE_ADMIN = "issueadmin";
+
+   /** permission to administer security hotspots */
+   public static final String PERMISSION_SECURITY_HOTSPOT_ADMIN = "securityhotspotadmin";
+
+   /** permission to administer architecture */
+   public static final String PERMISSION_ARCHITECTURE_ADMIN = "architectureadmin";
+
+   /** permission to administer project */
+   public static final String PERMISSION_ADMIN = "admin";
+
+   /** permission to scan project */
+   public static final String PERMISSION_SCAN = "scan";
+
    private static final Logger LOG = LoggerFactory.getLogger(SonarClientService.class);
+
+   private static final String API_SEARCH_PROJECTS = "api/components/search_projects"; // internal
 
    private static final String API_SEARCH_ISSUES = "api/issues/search";
 
@@ -113,6 +132,18 @@ public class SonarClientService {
 
    private static final String API_ADD_PROJECT_TO_QUALITY_PROFILE = "api/qualityprofiles/add_project";
 
+   private static final String API_USERS = "api/permissions/users"; // internal
+
+   private static final String API_GROUPS = "api/permissions/groups"; // internal
+
+   private static final String API_ADD_USER_PERMISSION = "api/permissions/add_user";
+
+   private static final String API_ADD_GROUP_PERMISSION = "api/permissions/add_group";
+
+   private static final String API_REMOVE_USER_PERMISSION = "api/permissions/remove_user";
+
+   private static final String API_REMOVE_GROUP_PERMISSION = "api/permissions/remove_group";
+
    private static final String PARAM_ISSUE = "issue";
 
    private static final String PARAM_TRANSITION = "transition";
@@ -129,7 +160,9 @@ public class SonarClientService {
 
    private static final String PARAM_ASSIGNEE = "assignee";
 
-   private static final String PARAM_PAGE_INDEX = "pageIndex";
+   private static final String PARAM_PAGE_INDEX = "p";
+
+   private static final String PARAM_PAGE_SIZE = "ps";
 
    private static final String PARAM_ADDITIONAL_FIELDS = "additionalFields";
 
@@ -152,6 +185,14 @@ public class SonarClientService {
    private static final String PARAM_QUALITY_PROFILE = "qualityProfile";
 
    private static final String PARAM_LANGUAGE = "language";
+
+   private static final String PARAM_PROJECT_KEY = "projectKey";
+
+   private static final String PARAM_LOGIN = "login";
+
+   private static final String PARAM_PERMISSION = "permission";
+
+   private static final String PARAM_GROUP_NAME = "groupName";
 
    private static final String TRANSITION_CONFIRM = "confirm";
 
@@ -188,6 +229,42 @@ public class SonarClientService {
    }
 
    /**
+    * Get all projects visible to the user.
+    *
+    * @return the project keys
+    */
+   public List<String> getProjects() {
+      return this.getWithPaging(SonarClientService.API_SEARCH_PROJECTS, List.of(),
+            ComponentsResponse.class, ComponentsResponse::getComponents, Component::getKey);
+   }
+
+   /**
+    * Get all users with permissions in a project.
+    *
+    * @param projectKey the project key
+    * @param withPermissions only return users with at least one permission for the project
+    * @return the users with permissions
+    */
+   public List<User> getUsers(final String projectKey, final boolean withPermissions) {
+      return this.getWithPaging(SonarClientService.API_USERS, List.of(
+            new BasicNameValuePair(SonarClientService.PARAM_PROJECT_KEY, projectKey)),
+            UsersResponse.class, UsersResponse::getUsers, user -> !withPermissions || !user.getPermissions().isEmpty() ? user : null);
+   }
+
+   /**
+    * Get all groups with permissions in a project.
+    *
+    * @param projectKey the project key
+    * @param withPermissions only return groups with at least one permission for the project
+    * @return the groups with permissions
+    */
+   public List<Group> getGroups(final String projectKey, final boolean withPermissions) {
+      return this.getWithPaging(SonarClientService.API_GROUPS, List.of(
+            new BasicNameValuePair(SonarClientService.PARAM_PROJECT_KEY, projectKey)),
+            GroupsResponse.class, GroupsResponse::getGroups, group -> !withPermissions || !group.getPermissions().isEmpty() ? group : null);
+   }
+
+   /**
     * Update project's issues based on flagged issues list.
     *
     * @param componentKey the component key, e.g. project key
@@ -198,23 +275,23 @@ public class SonarClientService {
     * @param migrateWontFixes if unresolved issues should be resolved as wontfix, if the source issue is a wontfix
     * @param addComments if comments should be migrated, too
     */
+   @SuppressWarnings({"checkstyle:parameternumber", "checkstyle:cyclomaticcomplexity"})
    public void updateIssues(final String componentKey, final List<Issue> sourceIssues, final int deltaLines,
          final boolean migrateConfirmed, final boolean migrateFalsePositives, final boolean migrateWontFixes, final boolean addComments) {
-      final Map<String, List<Issue>> issuesByRuleMap = new HashMap<>();
-
       final int total = sourceIssues.size();
-      int processed = 0;
-      int updated = 0;
-      int unmatched = 0;
 
-      SonarClientService.LOG.info("Processing {} issues for project {}...", total, componentKey);
+      SonarClientService.LOG.info("=== Processing {} issues for project {} ===", total, componentKey);
       try (CloseableHttpClient client = this.createHttpClient(true)) {
+         final Map<String, List<Issue>> issuesByRuleMap = new HashMap<>();
+         int processed = 0;
+         int updated = 0;
+         int unmatched = 0;
+
          for (final Issue sourceIssue : sourceIssues) {
             final String rule = sourceIssue.getRule();
             final List<Issue> ruleIssues = issuesByRuleMap.computeIfAbsent(rule, r -> this.getIssuesForRule(componentKey, r));
             final Issue targetIssue = ruleIssues.stream()
                   .filter(issue -> issue.getLine() != null) // closed issues
-                  .filter(issue -> issue.getParsedComponent().equals(sourceIssue.getParsedComponent()))
                   .filter(issue -> Math.abs(issue.getLine() - sourceIssue.getLine()) <= deltaLines)
                   .sorted((issue1, issue2) -> Math.abs(issue1.getLine() - sourceIssue.getLine()) - Math.abs(issue2.getLine() - sourceIssue.getLine()))
                   .findFirst()
@@ -264,7 +341,7 @@ public class SonarClientService {
 
             } else {
                unmatched++;
-               SonarClientService.LOG.warn("Could not find match for {}/{}", sourceIssue.getParsedComponent(), sourceIssue.getLine());
+               SonarClientService.LOG.warn("Could not find match for {}/{}", componentKey, sourceIssue.getLine());
             }
             processed++;
             SonarClientService.LOG.info("Processed {} and updated {} of {} issues", processed, updated, total);
@@ -273,6 +350,95 @@ public class SonarClientService {
       } catch (final Exception e) {
          SonarClientService.LOG.error("Error updating issues: {}", e.getMessage(), e);
       }
+   }
+
+   /**
+    * Update permissions of a project.
+    *
+    * @param projectKey the project key
+    * @param groups the groups with permissions
+    * @param users the users with permissions
+    * @param deletePermissions true to delete permissions that are not in the corresponding groups/users
+    */
+   public void updatePermissions(final String projectKey, final List<Group> groups, final List<User> users, final boolean deletePermissions) {
+      SonarClientService.LOG.info("=== Processing permissions for project {} ===", projectKey);
+      try (CloseableHttpClient client = this.createHttpClient(true)) {
+         final List<Group> targetGroups = this.getGroups(projectKey, false);
+         for (final Group sourceGroup : groups) {
+            targetGroups.stream().filter(g -> g.getName().equals(sourceGroup.getName())).findFirst().ifPresent(targetGroup -> {
+               final List<String> targetPermissions = targetGroup.getPermissions();
+               final List<String> permissionsToAdd = sourceGroup.getPermissions().stream().filter(Predicate.not(targetPermissions::contains)).toList();
+               permissionsToAdd.forEach(permission -> this.updatePermission(client, projectKey, true, targetGroup.getName(), false, permission));
+
+               if (deletePermissions) {
+                  final List<String> permissionsToRemove = targetPermissions.stream().filter(Predicate.not(sourceGroup.getPermissions()::contains)).toList();
+                  permissionsToRemove.forEach(permission -> this.updatePermission(client, projectKey, true, targetGroup.getName(), true, permission));
+               }
+            });
+         }
+         if (deletePermissions) {
+            targetGroups.stream()
+                  .filter(tg -> !tg.getPermissions().isEmpty())
+                  .filter(tg -> groups.stream().noneMatch(g -> g.getName().equals(tg.getName())))
+                  .forEach(tg -> {
+                     tg.getPermissions().forEach(permission -> this.updatePermission(client, projectKey, true, tg.getName(), true, permission));
+                  });
+         }
+
+         final List<User> targetUsers = this.getUsers(projectKey, false);
+         for (final User sourceUser : users) {
+            targetUsers.stream().filter(u -> u.getName().equals(sourceUser.getName())).findFirst().ifPresent(targetUser -> {
+               final List<String> targetPermissions = targetUser.getPermissions();
+               final List<String> permissionsToAdd = sourceUser.getPermissions().stream().filter(Predicate.not(targetPermissions::contains)).toList();
+               permissionsToAdd.forEach(permission -> this.updatePermission(client, projectKey, false, targetUser.getLogin(), false, permission));
+
+               if (deletePermissions) {
+                  final List<String> permissionsToRemove = targetPermissions.stream().filter(Predicate.not(sourceUser.getPermissions()::contains)).toList();
+                  permissionsToRemove.forEach(permission -> this.updatePermission(client, projectKey, false, targetUser.getLogin(), true, permission));
+               }
+            });
+         }
+         if (deletePermissions) {
+            targetUsers.stream()
+                  .filter(tu -> !tu.getPermissions().isEmpty())
+                  .filter(tu -> users.stream().noneMatch(u -> u.getName().equals(tu.getName())))
+                  .forEach(tu -> {
+                     tu.getPermissions().forEach(permission -> this.updatePermission(client, projectKey, false, tu.getLogin(), true, permission));
+                  });
+         }
+
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error updating permissions: {}", e.getMessage(), e);
+      }
+   }
+
+   private boolean updatePermission(final CloseableHttpClient client, final String projectKey,
+         final boolean isGroup, final String loginOrGroupName, final boolean isRemove, final String permission) {
+      if (this.readonly) {
+         SonarClientService.LOG.info("Permission {} {}/{} would be {}", isGroup ? "group" : "user", loginOrGroupName, permission, isRemove ? "removed" : "added");
+         return true;
+      }
+      try {
+         final String path;
+         if (isGroup) {
+            path = isRemove ? SonarClientService.API_REMOVE_GROUP_PERMISSION : SonarClientService.API_ADD_GROUP_PERMISSION;
+         } else {
+            path = isRemove ? SonarClientService.API_REMOVE_USER_PERMISSION : SonarClientService.API_ADD_USER_PERMISSION;
+         }
+         final StatusLine statusLine = this.post(client, this.baseUrl + path,
+               new BasicNameValuePair(isGroup ? SonarClientService.PARAM_GROUP_NAME : SonarClientService.PARAM_LOGIN, loginOrGroupName),
+               new BasicNameValuePair(SonarClientService.PARAM_PROJECT_KEY, projectKey),
+               new BasicNameValuePair(SonarClientService.PARAM_PERMISSION, permission));
+         if (statusLine.getStatusCode() == HttpStatus.SC_NO_CONTENT) {
+            SonarClientService.LOG.info("Permission {} {}/{} {}", isGroup ? "group" : "user", loginOrGroupName, permission, isRemove ? "removed" : "added");
+            return true;
+         } else {
+            SonarClientService.LOG.error("Error {} permission {} {}/{}", isRemove ? "removing" : "adding", isGroup ? "group" : "user", loginOrGroupName, permission);
+         }
+      } catch (final Exception e) {
+         SonarClientService.LOG.error("Error {} permission {} {}/{}", isRemove ? "removing" : "adding", isGroup ? "group" : "user", loginOrGroupName, permission, e);
+      }
+      return false;
    }
 
    private boolean doTransition(final CloseableHttpClient client, final Issue issue, final String transition) {
@@ -382,10 +548,10 @@ public class SonarClientService {
    private List<Issue> getIssues(final NameValuePair... parameters) {
       final List<Issue> issues = new ArrayList<>();
 
-      Integer pageIndex = 0; // Current page
-      IssuesResponse obj = null;
-
       try (CloseableHttpClient client = this.createHttpClient(true)) {
+         Integer pageIndex = 0; // Current page
+         IssuesResponse obj = null;
+
          do {
             final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH_ISSUES,
                   this.addParameters(parameters, new BasicNameValuePair(SonarClientService.PARAM_PAGE_INDEX, String.valueOf(pageIndex + 1))));
@@ -416,6 +582,7 @@ public class SonarClientService {
     * @param sourceProfiles the quality profiles of the source project
     */
    public void updateSettings(final String componentKey, final List<Setting> sourceSettings, final List<QualityProfile> sourceProfiles) {
+      SonarClientService.LOG.info("=== Processing settings of project {} ===", componentKey);
       try (CloseableHttpClient client = this.createHttpClient(true)) {
 
          List<Setting> targetSettings = this.getSettings(componentKey);
@@ -672,4 +839,38 @@ public class SonarClientService {
       }
       return Optional.empty();
    }
+
+   private <I, R extends PagingResponse, T> List<I> getWithPaging(final String path, final List<NameValuePair> parameters, final Class<R> responseClass, final Function<R, List<T>> responseItemsGetter,
+         final Function<T, I> resultItemGetter) {
+      final List<I> result = new ArrayList<>();
+
+      int pageIndex = 0; // Current page
+      R obj = null;
+
+      try (CloseableHttpClient client = this.createHttpClient(true)) {
+         do {
+            final String url = this.getUrl(this.baseUrl + path,
+                  this.addParameters(parameters.toArray(NameValuePair[]::new), new BasicNameValuePair(SonarClientService.PARAM_PAGE_INDEX, String.valueOf(pageIndex + 1))));
+            try {
+               obj = this.get(client, url, responseClass);
+
+               // Add list of issues extracted from current page
+               result.addAll(responseItemsGetter.apply(obj).stream()
+                     .map(resultItemGetter::apply)
+                     .filter(Objects::nonNull)
+                     .toList());
+               pageIndex = obj.getPaging().getPageIndex(); // Current page
+            } catch (final Exception e) {
+               SonarClientService.LOG.error("Error getting issues from URL {}.", url, e);
+               break;
+            }
+         } while (obj.getPaging().getPageIndex() * obj.getPaging().getPageSize() < obj.getPaging().getTotal());
+      } catch (final Exception e) {
+         final String url = this.getUrl(this.baseUrl + SonarClientService.API_SEARCH_ISSUES, parameters.toArray(NameValuePair[]::new));
+         SonarClientService.LOG.error("Error getting issues from URL {}: {}.", url, e.getMessage(), e);
+      }
+
+      return result;
+   }
+
 }

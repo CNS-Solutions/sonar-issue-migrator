@@ -1,16 +1,3 @@
-/*******************************************************************************
- ** COPYRIGHT: CNS-Solutions & Support GmbH
- **            Member of Frequentis Group
- **            Innovationsstrasse 1
- **            A-1100 Vienna
- **            AUSTRIA
- **            Tel. +43 1 81150-0
- ** LANGUAGE:  Java, J2SE JDK
- **
- ** The copyright to the computer program(s) herein is the property of
- ** CNS-Solutions & Support GmbH, Austria. The program(s) shall not be used
- ** and/or copied without the written permission of CNS-Solutions & Support GmbH.
- *******************************************************************************/
 package org.jmf.client;
 
 import java.io.File;
@@ -19,8 +6,11 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -39,9 +29,11 @@ import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilder;
 import org.apache.logging.log4j.core.config.builder.api.ConfigurationBuilderFactory;
 import org.apache.logging.log4j.core.config.builder.impl.BuiltConfiguration;
 import org.jmf.services.SonarClientService;
+import org.jmf.vo.Group;
 import org.jmf.vo.Issue;
 import org.jmf.vo.QualityProfile;
 import org.jmf.vo.Setting;
+import org.jmf.vo.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,30 +72,47 @@ public final class CommandLineClient {
          final String sourceComponentKey = cl.getOptionValue("sc");
          final String sourceLogin = cl.getOptionValue("sl");
          final String sourcePassword = cl.getOptionValue("sp");
+         final String sourceRegEx = cl.getOptionValue("sr");
 
          final String targetUrl = Optional.ofNullable(cl.getOptionValue("tu")).orElse(sourceUrl);
          final String targetComponentKey = Optional.ofNullable(cl.getOptionValue("tc")).orElse(sourceComponentKey);
          final String targetLogin = Optional.ofNullable(cl.getOptionValue("tl")).orElse(sourceLogin);
          final String targetPassword = Optional.ofNullable(cl.getOptionValue("tp")).orElse(sourcePassword);
+         final String targetRegEx = cl.getOptionValue("tr");
 
-         if (StringUtils.isBlank(sourceUrl) || StringUtils.isBlank(sourceComponentKey) || StringUtils.isBlank(targetUrl) || StringUtils.isBlank(targetComponentKey)) {
-            CommandLineClient.LOG.error("Missing source SonarQube URL or source component key");
+         if (StringUtils.isBlank(sourceUrl) || StringUtils.isBlank(sourceLogin)) {
+            CommandLineClient.LOG.error("Missing source SonarQube URL or login/token");
             CommandLineClient.help();
-         } else if (sourceUrl.equals(targetUrl) && sourceComponentKey.equals(targetComponentKey)) {
-            CommandLineClient.LOG.error("Invalid target. It must be different than the source.");
-            CommandLineClient.help();
+            return;
          }
 
          final boolean dryRun = cl.hasOption("d");
-         final boolean migrateProject = cl.hasOption("mp");
+         final SonarClientService sourceService = new SonarClientService(sourceUrl, sourceLogin, sourcePassword, true);
+         final SonarClientService targetService = new SonarClientService(targetUrl, targetLogin, targetPassword, dryRun);
 
-         if (migrateProject) {
-            SonarClientService service = new SonarClientService(sourceUrl, sourceLogin, sourcePassword, true);
-            final List<Setting> sourceSettings = service.getSettings(sourceComponentKey);
-            final List<QualityProfile> sourceProfiles = service.getQualityProfiles(sourceComponentKey);
+         final Map<String, List<String>> mappings = CommandLineClient.getMappings(sourceService, targetService, sourceComponentKey, targetComponentKey, sourceRegEx, targetRegEx);
+         if (mappings.isEmpty()) {
+            CommandLineClient.LOG.error("No source and/or target component key specified.");
+            CommandLineClient.help();
+            return;
+         } else if (sourceUrl.equals(targetUrl) && mappings.entrySet().stream().anyMatch(e -> e.getValue().contains(e.getKey()))) {
+            CommandLineClient.LOG.error("Invalid target component. It must be different from the source component.");
+            CommandLineClient.help();
+            return;
+         }
 
-            service = new SonarClientService(targetUrl, targetLogin, targetPassword, dryRun);
-            service.updateSettings(targetComponentKey, sourceSettings, sourceProfiles);
+         final boolean migrateSettings = cl.hasOption("ms");
+         final boolean migratePermissions = cl.hasOption("mp");
+         final boolean removePermissions = cl.hasOption("rp");
+
+         if (migrateSettings || migratePermissions) {
+            CommandLineClient.migrateProjects(sourceService, targetService, mappings, migrateSettings, migratePermissions, removePermissions);
+            return;
+         }
+
+         if (mappings.entrySet().stream().anyMatch(e -> e.getValue().size() != 1)) {
+            CommandLineClient.LOG.error("Multiple target components for a source component.");
+            CommandLineClient.help();
             return;
          }
 
@@ -111,6 +120,7 @@ public final class CommandLineClient {
          boolean migrateFalsePositive = cl.hasOption("mf");
          boolean migrateWontFix = cl.hasOption("mw");
          boolean migrateComments = cl.hasOption("mo");
+         final int lineDelta = Optional.ofNullable(cl.getOptionValue("dl")).map(Integer::valueOf).orElse(0);
 
          if (!migrateConfirmed && !migrateFalsePositive && !migrateWontFix && !migrateComments) {
             CommandLineClient.LOG.info("No migration options given. Enabling all options.");
@@ -121,15 +131,84 @@ public final class CommandLineClient {
          } else if (!migrateConfirmed && !migrateFalsePositive && !migrateWontFix) {
             CommandLineClient.LOG.error("Invalid migration options: one of confirmed, false-positives or wont-fix must be given.");
             CommandLineClient.help();
+            return;
          }
 
-         final int lineDelta = Optional.ofNullable(cl.getOptionValue("dl")).map(Integer::valueOf).orElse(0);
+         CommandLineClient.migrateIssues(sourceService, targetService, mappings, migrateConfirmed, migrateFalsePositive, migrateWontFix, migrateComments, lineDelta);
 
-         SonarClientService service = new SonarClientService(sourceUrl, sourceLogin, sourcePassword, true);
+      } catch (final ParseException e) {
+         CommandLineClient.LOG.error(e.getMessage(), e);
+         CommandLineClient.help();
+      } catch (final Exception e) {
+         CommandLineClient.LOG.error("Error migrating sonar issues: {}", e.getMessage(), e);
+      } finally {
+         LogManager.shutdown();
+      }
+   }
+
+   private static Map<String, List<String>> getMappings(final SonarClientService sourceService, final SonarClientService targetService,
+         final String sourceComponentKey, final String targetComponentKey, final String sourceRegEx, final String targetRegEx) {
+      if (StringUtils.isNotBlank(sourceComponentKey)) {
+         if (StringUtils.isNotBlank(targetRegEx)) {
+            final List<String> targetComponentKeys = CommandLineClient.getProjects(targetService, targetRegEx).stream()
+                  .filter(key -> !sourceComponentKey.equals(key))
+                  .toList();
+            return Map.of(sourceComponentKey, targetComponentKeys);
+         } else if (StringUtils.isNotBlank(targetComponentKey)) {
+            return Map.of(sourceComponentKey, List.of(targetComponentKey));
+         }
+      } else if (StringUtils.isNotBlank(sourceRegEx)) {
+         if (StringUtils.isNotBlank(targetRegEx)) {
+            return CommandLineClient.getProjects(sourceService, sourceRegEx).stream()
+                  .collect(Collectors.toMap(Function.identity(), sck -> List.of(sck.replaceAll(sourceRegEx, targetRegEx))));
+         } else if (StringUtils.isBlank(targetComponentKey)) {
+            return CommandLineClient.getProjects(sourceService, sourceRegEx).stream()
+                  .collect(Collectors.toMap(Function.identity(), sck -> List.of(sck)));
+         }
+      }
+      return Map.of();
+   }
+
+   private static List<String> getProjects(final SonarClientService service, final String regEx) {
+      return service.getProjects().stream()
+            .filter(componentKey -> componentKey.matches(regEx))
+            .sorted()
+            .toList();
+   }
+
+   private static void migrateProjects(final SonarClientService sourceService, final SonarClientService targetService,
+         final Map<String, List<String>> mappings, final boolean migrateSettings, final boolean migratePermissions, final boolean remove) {
+      for (final Map.Entry<String, List<String>> mapping : mappings.entrySet()) {
+         final String sourceComponentKey = mapping.getKey();
+
+         if (migrateSettings) {
+            final List<Setting> sourceSettings = sourceService.getSettings(sourceComponentKey);
+            final List<QualityProfile> sourceProfiles = sourceService.getQualityProfiles(sourceComponentKey);
+            for (final String targetComponentKey : mapping.getValue()) {
+               targetService.updateSettings(targetComponentKey, sourceSettings, sourceProfiles);
+            }
+         }
+
+         if (migratePermissions) {
+            final List<User> users = sourceService.getUsers(sourceComponentKey, true);
+            final List<Group> groups = sourceService.getGroups(sourceComponentKey, true);
+            for (final String targetComponentKey : mapping.getValue()) {
+               targetService.updatePermissions(targetComponentKey, groups, users, remove);
+            }
+         }
+      }
+   }
+
+   private static void migrateIssues(final SonarClientService sourceService, final SonarClientService targetService,
+         final Map<String, List<String>> mappings, final boolean migrateConfirmed, final boolean migrateFalsePositive,
+         final boolean migrateWontFix, final boolean migrateComments, final int lineDelta) {
+      for (final Map.Entry<String, List<String>> mapping : mappings.entrySet()) {
+         final String sourceComponentKey = mapping.getKey();
+         final String targetComponentKey = mapping.getValue().get(0);
 
          final List<Issue> sourceIssues = new ArrayList<>();
          if (migrateConfirmed) {
-            sourceIssues.addAll(service.getIssuesInStatus(sourceComponentKey, SonarClientService.STATUS_CONFIRMED));
+            sourceIssues.addAll(sourceService.getIssuesInStatus(sourceComponentKey, SonarClientService.STATUS_CONFIRMED));
          }
          final Set<String> resolutions = new HashSet<>();
          if (migrateFalsePositive) {
@@ -139,21 +218,11 @@ public final class CommandLineClient {
             resolutions.add(SonarClientService.RESOLUTION_WONT_FIX);
          }
          if (!resolutions.isEmpty()) {
-            sourceIssues.addAll(service.getIssuesInStatus(sourceComponentKey, SonarClientService.STATUS_RESOLVED, resolutions.toArray(new String[resolutions.size()])));
+            sourceIssues.addAll(sourceService.getIssuesInStatus(sourceComponentKey, SonarClientService.STATUS_RESOLVED, resolutions.toArray(new String[resolutions.size()])));
          }
 
-         service = new SonarClientService(targetUrl, targetLogin, targetPassword, dryRun);
-
-         service.updateIssues(targetComponentKey, sourceIssues, lineDelta, migrateConfirmed, migrateFalsePositive, migrateWontFix, migrateComments);
-      } catch (final ParseException e) {
-         CommandLineClient.LOG.error(e.getMessage(), e);
-         CommandLineClient.help();
-      } catch (final Exception e) {
-         CommandLineClient.LOG.error("Error migrating sonar issues: {}", e.getMessage(), e);
-      } finally {
-         LogManager.shutdown();
+         targetService.updateIssues(targetComponentKey, sourceIssues, lineDelta, migrateConfirmed, migrateFalsePositive, migrateWontFix, migrateComments);
       }
-
    }
 
    private static void help() {
@@ -213,6 +282,12 @@ public final class CommandLineClient {
             .argName("password")
             .desc("Password for source, if login user name is given")
             .build());
+      options.addOption(Option.builder("sr")
+            .longOpt("source-regex")
+            .hasArgs()
+            .argName("regex")
+            .desc("Source regex for mapping component names")
+            .build());
       options.addOption(Option.builder("tu")
             .longOpt("target-url")
             .hasArgs()
@@ -237,14 +312,28 @@ public final class CommandLineClient {
             .argName("password")
             .desc("Password for target, if login user  name is given - if not set the source password is used")
             .build());
+      options.addOption(Option.builder("tr")
+            .longOpt("target-regex")
+            .hasArgs()
+            .argName("regex")
+            .desc("Target regex for mapping component names")
+            .build());
       options.addOption(Option.builder("dl")
             .longOpt("delta-line")
             .hasArg()
             .argName("delta")
             .desc("Maximum delta of line numbers (default 0)")
             .build());
+      options.addOption(Option.builder("rp")
+            .longOpt("remove-permissions")
+            .desc("Remove permissions the source user/group does not have")
+            .build());
       options.addOption(Option.builder("mp")
-            .longOpt("migrate-project")
+            .longOpt("migrate-permissions")
+            .desc("Migrate project permissions")
+            .build());
+      options.addOption(Option.builder("ms")
+            .longOpt("migrate-settings")
             .desc("Migrate project settings")
             .build());
       options.addOption(Option.builder("mc")

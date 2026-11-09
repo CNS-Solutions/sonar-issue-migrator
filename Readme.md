@@ -71,18 +71,29 @@ Options:
   -mc,--migrate-confirmed              Migrate confirmed
   -mf,--migrate-false-positive         Migrate resolved/false-positive
   -mo,--migrate-comments               Migrate comments
-  -mp,--migrate-project                Migrate project settings
+  -mp,--migrate-permissions            Migrate project permissions
+  -ms,--migrate-settings               Migrate project settings
   -mw,--migrate-wont-fix               Migrate resolved/won't fix
   -sc,--source-component <key>         Source component key, e.g. project key
   -sl,--source-login <user-or-token>   Login user name or token for source
   -sp,--source-password <password>     Password for source, if login user name is given
+  -sr,--source-regex <regex>           Source regex for component names
   -su,--source-url <url>               URL of source SonarQube
   -tc,--target-component <key>         Target component key - if not set the source comonent key is used
   -tl,--target-login <user-or-token>   Login user name or token for target - if not set the source login is used
   -tp,--target-password <password>     Password for target, if login user  name is given - if not set the source
                                        password is used
+  -tr,--target-regex <regex>           Target regex for component names
   -tu,--target-url <url>               URL of target SonarQube - if not set, the source URL is used
 ```
+
+To specify the projects, you can
+
+* use `-sc` (and different `-su` and `-tu`) to migrate from one sonar instance to another
+* use `-sc` and `-tc` to migrate from one project to another
+* use `-sc` and `-tr` to copy project settings/permissions to multiple other projects, e.g. `-sc proj1 -tr proj\d.*`
+* use `-sr` (and different `-su` and `-tu`) to migrate multiple projects from one sonar instance to another
+* use `-sr` and `-tr` to migrate multiple projects, e.g. `-sr proj(\d+) -tr proj\1copy` 
 
 If none of the migration options are given, all issue related migration options are enabled.
 
@@ -90,7 +101,8 @@ The projects need to be identical or at least very similar to map the issues, as
 If there are small changes between the projects, you might want to set a delta line number greater than 0.
 
 Whenever possible, you should use a security token (which you can create from your SonarQube account page) instead of user name/password.
-To update the project settings, you need the permission "Administer Quality Profiles", the edit right on the quality profiles and the administration right on the target project. 
+To update the project settings, you need the permission "Administer Quality Profiles", the edit right on the quality profiles and the administration right on the target project.
+ 
 To update the issue status, you need the permission "Administer Issues" in SonarQube for the target project.
 The original creator of the comments will be lost, as all comments are marked as added by the user used for the migration.
 

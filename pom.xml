@@ -3,7 +3,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>at.cns</groupId>
 	<artifactId>sonar-issue-migrator</artifactId>
-	<version>1.0.1</version>
+	<version>1.0.2</version>
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -14,8 +14,8 @@
 		<version.maven-assembly-plugin>2.4</version.maven-assembly-plugin>
 
 		<version.commons-cli>1.4</version.commons-cli>
-		<version.log4j>2.13.2</version.log4j>
-		<version.slf4j>1.7.25</version.slf4j>
+		<version.log4j>2.26.1</version.log4j>
+		<version.slf4j>1.7.36</version.slf4j>
 		<version.httpclient>4.4</version.httpclient>
 		<version.jackson>2.6.3</version.jackson>
 		<version.junit>4.11</version.junit>
